@@ -1,116 +1,131 @@
 /*
  * ATIVIDADE PRÁTICA 01 - MÉTODO DE NEWTON-RAPHSON
  * Disciplina: Métodos Numéricos e Computacionais
- * * Atualização: Correção de "2x" (Multiplicação Implícita)
+ * Descrição: Implementação do método iterativo para encontrar raízes de funções não lineares.
+ * O programa aceita funções predefinidas ou inseridas manualmente pelo usuário,
+ * calcula as iterações e exporta os resultados para um arquivo 'tabela.csv'.
  */
 
 #include <iostream>
 #include <cmath>      
-#include <iomanip>    
+#include <iomanip>  
 #include <functional> 
 #include <string>
 #include <cctype>     
-#include <stdexcept>  
+#include <stdexcept>
+#include <fstream>   
 
 using namespace std;
 
 // ==========================================================
-// CLASSE: INTERPRETADOR COM CORREÇÃO AUTOMÁTICA
+// CLASSE: SIMPLE PARSER (Interpretador de Expressões)
+// Responsável por converter a string digitada (ex: "x^2 - 4") 
+// em um valor numérico computável em tempo de execução.
+// Utiliza a técnica de "Recursive Descent Parsing".
 // ==========================================================
 class SimpleParser {
 private:
-    string expr;
-    int pos;
-    double x_val;
+    string expr;       // A expressão em texto
+    int pos;           // Posição atual do cursor na leitura da string
+    long double x_val; // O valor atual de 'x' para substituir na equação
 
-    // --- MÉTODOS AUXILIARES DE LEITURA ---
+    // Verifica o caractere atual sem avançar o cursor
     char peek() {
         while (pos < expr.length() && isspace(expr[pos])) pos++;
         if (pos == expr.length()) return 0;
         return expr[pos];
     }
 
+    // Lê e retorna o caractere atual, avançando o cursor
     char get() {
         char c = peek();
         if (pos < expr.length()) pos++;
         return c;
     }
 
-    // --- PARSERS RECURSIVOS ---
-    double parseNumber() {
+    // Lê um número completo (inteiro ou decimal) da string
+    long double parseNumber() { 
         char c = peek();
         string numStr;
         while (isdigit(c) || c == '.') {
             numStr += get();
             c = peek();
         }
-        if (numStr.empty()) return 0; 
-        return stod(numStr);
+        if (numStr.empty()) return 0.0L; 
+        return stold(numStr); // Converte string para long double
     }
 
-    double parseFactor() {
+    // Processa fatores: números, parênteses, negativos e funções (sin, cos, etc.)
+    long double parseFactor() {
         char c = peek();
         
+        // Se for dígito, lê o número
         if (isdigit(c) || c == '.') return parseNumber();
         
+        // Se for parêntese, resolve a expressão interna recursivamente
         if (c == '(') {
             get(); 
-            double result = parseExpression();
+            long double result = parseExpression();
             if (get() != ')') throw runtime_error("Esperado ')'");
             return result;
         }
         
+        // Operador unário negativo (ex: -5 ou -x)
         if (c == '-') {
             get();
             return -parseFactor();
         }
 
+        // Variáveis e Funções Matemáticas
         if (isalpha(c)) {
             string name;
             while (isalpha(peek())) name += get();
-
+            
             if (name == "x") return x_val;
             else if (name == "sin") return sin(parseFactor());
             else if (name == "cos") return cos(parseFactor());
             else if (name == "tan") return tan(parseFactor());
-            else if (name == "exp") return exp(parseFactor()); 
-            else if (name == "log") return log(parseFactor()); 
+            else if (name == "exp") return exp(parseFactor()); // Exponencial e^x
+            else if (name == "log") return log(parseFactor()); // Logaritmo natural
             else if (name == "sqrt") return sqrt(parseFactor());
             else throw runtime_error("Funcao desconhecida: " + name);
         }
-
         throw runtime_error("Caractere inesperado: " + string(1, c));
     }
 
-    double parsePower() {
-        double left = parseFactor();
+    // Processa potências (^), que têm prioridade sobre multiplicação
+    long double parsePower() {
+        long double left = parseFactor();
         while (peek() == '^') {
             get();
-            double right = parseFactor();
+            long double right = parseFactor();
             left = pow(left, right);
         }
         return left;
     }
 
-    double parseTerm() {
-        double left = parsePower();
+    // Processa multiplicação e divisão
+    long double parseTerm() {
+        long double left = parsePower();
         while (peek() == '*' || peek() == '/') {
             char op = get();
-            double right = parsePower();
+            long double right = parsePower();
             if (op == '*') left *= right;
             else {
-                if (abs(right) < 1e-9) throw runtime_error("Divisao por zero");
+                // Proteção contra divisão por zero
+                if (abs(right) < 1e-15L) throw runtime_error("Divisao por zero detectada na expressao");
                 left /= right;
             }
         }
         return left;
     }
 
-    double parseExpression() {
-        double left = parseTerm();
+    // Processa soma e subtração (nível mais baixo de precedência)
+    long double parseExpression() {
+        long double left = parseTerm();
         while (peek() == '+' || peek() == '-') {
             char op = get();
-            double right = parseTerm();
+            long double right = parseTerm();
             if (op == '+') left += right;
             else left -= right;
         }
@@ -118,194 +133,237 @@ private:
     }
 
 public:
-    // --- NOVO: PRÉ-PROCESSADOR DE STRING ---
-    // Transforma "2x" em "2*x" para evitar erros do usuário
+    // Método auxiliar para tratar erros comuns de digitação (ex: "2x" -> "2*x")
     string preprocess(string s) {
         string res = "";
         for (size_t i = 0; i < s.length(); i++) {
             res += s[i];
-            // Se o atual é digito e o proximo é letra (ex: 2x, 3s de sin), insere *
+            // Se encontrar um número seguido imediatamente de uma letra, insere multiplicação
             if (i + 1 < s.length()) {
                 if (isdigit(s[i]) && isalpha(s[i+1])) {
                     res += '*';
                 }
-                // Se fecha parenteses e começa letra/numero (ex: )x ou )2 )
-                // isso é mais complexo, vamos focar no 2x que foi o erro principal
             }
         }
         return res;
     }
 
-    double evaluate(string expression_str, double x) {
-        // Aplica a correção automática antes de calcular
+    // Função principal chamada pelo código para calcular f(x)
+    long double evaluate(string expression_str, long double x) {
         this->expr = preprocess(expression_str);
         this->pos = 0;
         this->x_val = x;
         return parseExpression();
     }
     
-    // Método auxiliar só para mostrar ao usuário como ficou a função
+    // Retorna a string corrigida para exibição
     string getFixedString(string s) {
         return preprocess(s);
     }
 };
 
 // ==========================================================
-// FUNÇÕES PREDEFINIDAS
+// FUNÇÕES PREDEFINIDAS PARA TESTE
+// Sugeridas no descritivo da atividade
 // ==========================================================
-double func1(double x) { return pow(x, 3) - 2 * x - 5; }
-double deriv1(double x) { return 3 * pow(x, 2) - 2; }
+long double func1(long double x) { return pow(x, 3) - 2 * x - 5; }
+long double deriv1(long double x) { return 3 * pow(x, 2) - 2; }
 
-double func2(double x) { return cos(x) - x; }
-double deriv2(double x) { return -sin(x) - 1; }
+long double func2(long double x) { return cos(x) - x; }
+long double deriv2(long double x) { return -sin(x) - 1.0L; }
 
-double func3(double x) { return exp(-x) - x; }
-double deriv3(double x) { return -exp(-x) - 1; }
+long double func3(long double x) { return exp(-x) - x; }
+long double deriv3(long double x) { return -exp(-x) - 1.0L; }
 
-double func4(double x) { return pow(x, 3) - 9 * x + 3; }
-double deriv4(double x) { return 3 * pow(x, 2) - 9; }
+long double func4(long double x) { return pow(x, 3) - 9 * x + 3; }
+long double deriv4(long double x) { return 3 * pow(x, 2) - 9; }
 
 // ==========================================================
-// ALGORITMO NEWTON-RAPHSON
+// ALGORITMO: MÉTODO DE NEWTON-RAPHSON
+// Recebe as funções f e f', o ponto inicial e os critérios de parada.
 // ==========================================================
 void newtonRaphson(
-    std::function<double(double)> f,
-    std::function<double(double)> df,
-    double x0,
-    double epsilon,
-    int maxIter
+    std::function<long double(long double)> f,  // Função f(x)
+    std::function<long double(long double)> df, // Derivada f'(x)
+    long double x0,                             // Chute inicial
+    long double epsilon,                        // Tolerância (Erro máximo)
+    int maxIter                                 // Número máximo de iterações
 ) {
-    double x_atual = x0;
-    double x_prox;
-    double erro = epsilon + 1.0;
+    long double x_atual = x0;
+    long double x_prox;
+    long double erro = epsilon + 1.0L; // Garante entrada no loop
     int iter = 0;
 
-    cout << "\n" << string(70, '-') << endl;
-    cout << "ITERACOES (Newton-Raphson)" << endl;
-    cout << string(70, '-') << endl;
-    cout << left << setw(5) << "k" 
-         << left << setw(20) << "x_n" 
-         << left << setw(20) << "f(x_n)" 
-         << left << setw(20) << "Erro Estimado" << endl;
-    cout << string(70, '-') << endl;
-    cout << fixed << setprecision(8);
+    // Prepara o arquivo para salvar os dados
+    ofstream arquivoCsv;
+    arquivoCsv.open("tabela.csv"); 
+    
+    // Cabeçalho do CSV
+    arquivoCsv << "k,x_n,f(x_n),Erro Estimado" << endl;
+    arquivoCsv << fixed << setprecision(15); 
 
+    // Cabeçalho da Tabela no Console
+    cout << "\n" << string(130, '-') << endl;
+    cout << "TABELA DE ITERACOES (Metodo de Newton-Raphson)" << endl;
+    cout << string(130, '-') << endl;
+    // Formatação espaçada para acomodar números de alta precisão
+    cout << left << setw(10) << "k" 
+         << left << setw(40) << "x_n" 
+         << left << setw(40) << "f(x_n)" 
+         << left << setw(40) << "Erro Estimado" << endl;
+    cout << string(130, '-') << endl;
+    cout << fixed << setprecision(12);
+
+    // Loop Iterativo Principal
     while (iter < maxIter) {
-        double fx, dfx;
+        long double fx, dfx;
         
+        // Tratamento de erros de cálculo (ex: overflow, divisão por zero na função)
         try {
             fx = f(x_atual);
             dfx = df(x_atual);
         } catch (const exception& e) {
-            cout << "\n[ERRO DE CALCULO] " << e.what() << endl;
+            cout << "\n[ERRO MATEMATICO DETECTADO] " << e.what() << endl;
+            arquivoCsv << "ERRO," << e.what() << endl;
+            arquivoCsv.close();
             return;
         }
 
-        if (abs(dfx) < 1e-15) {
-            cout << "\n[ERRO CRITICO] Derivada zerou (divisao por zero) em x=" << x_atual << endl;
+        // Verificação Crítica: Derivada nula
+        // O método falha se f'(x) = 0, pois causaria divisão por zero na fórmula
+        if (abs(dfx) < 1e-18L) { 
+            cout << "\n[ERRO] Derivada anulou-se em x = " << x_atual << ". O metodo nao pode prosseguir." << endl;
+            arquivoCsv.close();
             return;
         }
 
+        // --- FÓRMULA DO MÉTODO ---
+        // x_{n+1} = x_n - f(x_n) / f'(x_n)
         x_prox = x_atual - (fx / dfx);
+
+        // Cálculo do erro estimado: |x_{n+1} - x_n|
         erro = abs(x_prox - x_atual);
 
-        cout << left << setw(5) << iter + 1
-             << left << setw(20) << x_atual
-             << left << setw(20) << fx
-             << left << setw(20) << erro << endl;
+        // Exibição dos resultados na tela
+        cout << left << setw(10) << iter + 1
+             << left << setw(40) << x_atual
+             << left << setw(40) << fx
+             << left << setw(0) << erro << endl;
 
+        // Gravação no arquivo
+        arquivoCsv << (iter + 1) << "," 
+                   << x_atual << "," 
+                   << fx << "," 
+                   << erro << endl;
+
+        // Atualiza para a próxima iteração
         x_atual = x_prox;
         iter++;
 
+        // CRITÉRIO DE PARADA 1: Convergência (Erro < Epsilon)
         if (erro < epsilon) {
-            cout << string(70, '-') << endl;
+            cout << string(130, '-') << endl;
             cout << "\nRESULTADO FINAL:" << endl;
-            cout << "Status: CONVERGIU" << endl;
+            cout << "Status: CONVERGIU COM SUCESSO" << endl;
             cout << "Raiz Aproximada: " << x_atual << endl;
             cout << "Total de Iteracoes: " << iter << endl;
+            
+            cout << "\n[INFO] O arquivo 'tabela.csv' foi gerado com os dados detalhados." << endl;
+            arquivoCsv.close(); 
             return;
         }
     }
 
-    cout << string(70, '-') << endl;
+    // CRITÉRIO DE PARADA 2: Número máximo de iterações atingido
+    cout << string(130, '-') << endl;
     cout << "\nRESULTADO FINAL:" << endl;
-    cout << "Status: NAO CONVERGIU (Limite de iteracoes)" << endl;
+    cout << "Status: NAO CONVERGIU (Limite de iteracoes atingido)" << endl;
     cout << "Ultima aproximacao: " << x_atual << endl;
+    
+    arquivoCsv.close();
 }
 
 // ==========================================================
-// MAIN
+// FUNÇÃO PRINCIPAL (Menu e Entradas)
 // ==========================================================
 int main() {
     int escolha;
-    double x0, epsilon;
+    long double x0, epsilon;
     int maxIter;
-    SimpleParser parser;
+    SimpleParser parser; // Instância do interpretador
 
     string userFuncStr, userDerivStr;
-    std::function<double(double)> f_selecionada;
-    std::function<double(double)> df_selecionada;
+    
+    // Ponteiros de função (std::function) para armazenar a escolha do usuário
+    std::function<long double(long double)> f_selecionada;
+    std::function<long double(long double)> df_selecionada;
     string desc_f;
 
-    cout << "=== METODO DE NEWTON-RAPHSON ===" << endl;
+    cout << "=== IMPLEMENTACAO: METODO DE NEWTON-RAPHSON ===" << endl;
+    cout << "Escolha a funcao f(x) para encontrar a raiz:" << endl;
     cout << "1. f(x) = x^3 - 2x - 5" << endl;
     cout << "2. f(x) = cos(x) - x" << endl;
     cout << "3. f(x) = e^(-x) - x" << endl;
     cout << "4. f(x) = x^3 - 9x + 3" << endl;
-    cout << "5. DIGITAR MINHA PROPRIA FUNCAO" << endl;
+    cout << "5. DIGITAR MINHA PROPRIA FUNCAO (Manual)" << endl;
     cout << "Opcao: ";
     cin >> escolha;
 
     if (escolha == 5) {
-        cout << "\n--- GUIA RAPIDO ---" << endl;
-        cout << "Use: + - * / ^" << endl;
-        cout << "Ex:  x^2 - 4" << endl;
-        cout << "Obs: O programa corrige '2x' para '2*x' automaticamente." << endl;
+        // Modo de entrada manual da função
+        cout << "\n--- GUIA DE SINTAXE ---" << endl;
+        cout << "Operadores suportados: + - * / ^" << endl;
+        cout << "Funcoes suportadas: sin, cos, tan, exp, log, sqrt" << endl;
+        cout << "Exemplo: x^2 - 4*x + 1" << endl;
         cout << "------------------------------------" << endl;
 
         cout << "Digite a funcao f(x): ";
-        cin.ignore(); 
+        cin.ignore(); // Limpeza de buffer necessária antes do getline
         getline(cin, userFuncStr);
 
         cout << "Digite a derivada f'(x): ";
         getline(cin, userDerivStr);
 
-        // Mostra a correção para o usuário confirmar
+        // Exibe a interpretação para confirmação do usuário
         string fixedF = parser.getFixedString(userFuncStr);
         string fixedD = parser.getFixedString(userDerivStr);
-        cout << "\n[Interpretador] Entendido como:" << endl;
-        cout << "Funcao:   " << fixedF << endl;
-        cout << "Derivada: " << fixedD << endl;
+        cout << "\n[Sistema] Funcao interpretada como:   " << fixedF << endl;
+        cout << "[Sistema] Derivada interpretada como: " << fixedD << endl;
 
         desc_f = fixedF;
 
-        f_selecionada = [&parser, userFuncStr](double x) {
+        // Configura as funções lambdas para usar o parser
+        f_selecionada = [&parser, userFuncStr](long double x) {
             return parser.evaluate(userFuncStr, x);
         };
-        df_selecionada = [&parser, userDerivStr](double x) {
+        df_selecionada = [&parser, userDerivStr](long double x) {
             return parser.evaluate(userDerivStr, x);
         };
 
     } else {
+        // Seleção das funções hardcoded (compiladas)
         switch (escolha) {
             case 1: f_selecionada = func1; df_selecionada = deriv1; desc_f = "x^3 - 2x - 5"; break;
             case 2: f_selecionada = func2; df_selecionada = deriv2; desc_f = "cos(x) - x"; break;
             case 3: f_selecionada = func3; df_selecionada = deriv3; desc_f = "e^(-x) - x"; break;
             case 4: f_selecionada = func4; df_selecionada = deriv4; desc_f = "x^3 - 9x + 3"; break;
-            default: cout << "Opcao invalida!" << endl; return 1;
+            default: cout << "Opcao invalida! Reinicie o programa." << endl; return 1;
         }
     }
 
-    cout << "\n--- Parametros ---" << endl;
-    cout << "Chute inicial (x0): ";
+    // Coleta dos parâmetros do método
+    cout << "\n--- Parametros de Execucao ---" << endl;
+    cout << "Digite o chute inicial (x0): ";
     cin >> x0;
-    cout << "Erro maximo (epsilon, Ex = 0.0001): ";
+    cout << "Digite o erro maximo permitido (epsilon): ";
     cin >> epsilon;
-    cout << "Maximo de iteracoes: ";
+    cout << "Digite o numero maximo de iteracoes: ";
     cin >> maxIter;
 
+    // Chamada da rotina principal
     newtonRaphson(f_selecionada, df_selecionada, x0, epsilon, maxIter);
 
+    // Pausa para visualização final
     cout << "\nPressione Enter para sair...";
     cin.ignore();
     cin.get();
